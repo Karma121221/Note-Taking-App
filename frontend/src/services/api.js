@@ -15,7 +15,6 @@ const getApiBaseUrl = () => {
 };
 
 const API_BASE_URL = getApiBaseUrl();
-console.log('API_BASE_URL:', API_BASE_URL);
 
 // Set up axios defaults
 axios.defaults.baseURL = API_BASE_URL;

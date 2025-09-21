@@ -3,12 +3,32 @@ from fastapi.middleware.cors import CORSMiddleware
 import sys
 import os
 
-# Add backend to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+print("Starting API import...")
 
-from backend.app.core.config import settings
-from backend.app.api.main import api_router
-from backend.app.core.database import connect_to_mongo, close_mongo_connection
+# Add backend to path
+backend_path = os.path.join(os.path.dirname(__file__), '..')
+sys.path.append(backend_path)
+print(f"Added to path: {backend_path}")
+
+try:
+    from backend.app.core.config import settings
+    print("Settings imported successfully")
+    print(f"MONGO_URI: {settings.MONGO_URI[:20]}...")
+    print(f"DATABASE_NAME: {settings.DATABASE_NAME}")
+except Exception as e:
+    print(f"Failed to import settings: {e}")
+
+try:
+    from backend.app.api.main import api_router
+    print("API router imported successfully")
+except Exception as e:
+    print(f"Failed to import API router: {e}")
+
+try:
+    from backend.app.core.database import connect_to_mongo, close_mongo_connection
+    print("Database functions imported successfully")
+except Exception as e:
+    print(f"Failed to import database functions: {e}")
 
 # Create FastAPI instance
 app = FastAPI(
