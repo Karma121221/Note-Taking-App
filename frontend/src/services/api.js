@@ -2,12 +2,15 @@ import axios from 'axios';
 
 // Determine the API base URL based on environment
 const getApiBaseUrl = () => {
-  // Check if we're in development mode
-  if (import.meta.env.DEV) {
+  console.log('ENV DEV:', import.meta.env.DEV, 'PROD:', import.meta.env.PROD, 'MODE:', import.meta.env.MODE);
+  console.log('Hostname:', window.location.hostname);
+
+  // Check if we're in development mode or localhost
+  if (import.meta.env.DEV || window.location.hostname === 'localhost' || window.location.hostname.startsWith('127.')) {
     return 'http://localhost:8000/api';
   }
-  
-  // In production, use the same domain but with /api path
+
+  // In production (including Vercel), use the same domain but with /api path
   return '/api';
 };
 
