@@ -1,6 +1,17 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8000/api';
+// Determine the API base URL based on environment
+const getApiBaseUrl = () => {
+  // Check if we're in development mode
+  if (import.meta.env.DEV) {
+    return 'http://localhost:8000/api';
+  }
+  
+  // In production, use the same domain but with /api path
+  return '/api';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 // Set up axios defaults
 axios.defaults.baseURL = API_BASE_URL;
