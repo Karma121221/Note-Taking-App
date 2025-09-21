@@ -11,12 +11,27 @@ export const useAuth = () => {
   return context;
 };
 
+// Determine the API base URL based on environment
+const getApiBaseUrl = () => {
+  console.log('AuthContext - ENV DEV:', import.meta.env.DEV, 'PROD:', import.meta.env.PROD, 'MODE:', import.meta.env.MODE);
+  console.log('AuthContext - Hostname:', typeof window !== 'undefined' ? window.location.hostname : 'SSR');
+
+  // Check if we're in development mode or localhost
+  if (import.meta.env.DEV || (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname.startsWith('127.')))) {
+    return 'http://localhost:8000/api';
+  }
+
+  // In production (including Vercel), use the same domain but with /api path
+  return '/api';
+};
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   // Configure axios defaults
-  const baseURL = 'http://localhost:8000/api';
+  const baseURL = getApiBaseUrl();
+  console.log('AuthContext - baseURL:', baseURL);
   axios.defaults.baseURL = baseURL;
 
   // Set up axios interceptor to include token in requests
