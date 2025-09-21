@@ -1,28 +1,34 @@
-import sys
-import os
-import logging
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-# Add the backend directory to the Python path
-backend_path = os.path.join(os.path.dirname(__file__), '..', 'backend')
-sys.path.insert(0, backend_path)
+# Create FastAPI instance
+app = FastAPI(
+    title="Note Taking App API",
+    description="A note-taking application for children and parents",
+    version="1.0.0"
+)
 
-try:
-    from backend.main import app
-    logging.info("Successfully imported FastAPI app from backend.main")
-except Exception as e:
-    logging.error(f"Failed to import FastAPI app: {e}")
-    # Create a simple FastAPI app as fallback
-    from fastapi import FastAPI
-    app = FastAPI()
-    
-    @app.get("/")
-    async def root():
-        return {"message": "Note Taking App API is running"}
-    
-    @app.get("/health")
-    async def health():
-        return {"status": "healthy"}
+# Set up CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, specify your domain
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Export the app for Vercel serverless functions
-# This is the main export that Vercel will use
-__all__ = ["app"]
+# Basic endpoints
+@app.get("/")
+async def root():
+    return {"message": "Note Taking App API is running", "status": "success"}
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "api": "working"}
+
+@app.get("/test")
+async def test():
+    return {"message": "API test endpoint", "working": True}
+
+# For Vercel deployment
+handler = app
