@@ -59,20 +59,38 @@ _client = None
 def get_mongo_client():
     global _client
     if _client is None:
-        _client = AsyncIOMotorClient(settings.MONGO_URI)
+        logger.info("Creating new MongoDB client")
+        _client = AsyncIOMotorClient(
+            settings.MONGO_URI,
+            maxPoolSize=1,  # Limit pool size for serverless
+            minPoolSize=0,
+            maxIdleTimeMS=30000,  # Close connections after 30 seconds
+            serverSelectionTimeoutMS=5000,  # 5 second timeout
+            connectTimeoutMS=10000,  # 10 second connection timeout
+            socketTimeoutMS=10000,  # 10 second socket timeout
+        )
     return _client
 
 async def get_database():
     try:
         client = get_mongo_client()
         db = client[settings.DATABASE_NAME]
+        
+        # Quick ping to ensure connection is alive
         await client.admin.command('ping')
+        logger.info("Database connection successful")
         return db
     except Exception as e:
         logger.error(f"Database connection error: {e}")
+        # Reset client on error
         global _client
+        if _client:
+            _client.close()
         _client = None
-        raise
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database connection failed"
+        )
 
 # Models
 class UserRole(str, Enum):
@@ -159,10 +177,24 @@ def verify_token(token: str):
         logger.error(f"JWT verification error: {e}")
         return None
 
+async def get_database_safe():
+    """Safe database getter with proper error handling for serverless"""
+    db = None
+    try:
+        db = await get_database()
+        return db
+    except Exception as e:
+        logger.error(f"Failed to get database: {e}")
+        await close_db_connection()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database service temporarily unavailable"
+        )
+
 # Dependencies
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db = Depends(get_database)
+    db = Depends(get_database_safe)
 ):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -180,8 +212,11 @@ async def get_current_user(
             raise credentials_exception
         
         return User(**user, id=str(user["_id"]))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in get_current_user: {e}")
+        await close_db_connection()
         raise credentials_exception
 
 async def get_current_child_user(current_user = Depends(get_current_user)):
@@ -192,6 +227,14 @@ async def get_current_child_user(current_user = Depends(get_current_user)):
         )
     return current_user
 
+async def close_db_connection():
+    """Close database connection"""
+    global _client
+    if _client:
+        logger.info("Closing MongoDB connection")
+        _client.close()
+        _client = None
+
 # FastAPI app
 app = FastAPI(title="Note Taking App API")
 
@@ -200,6 +243,10 @@ app = FastAPI(title="Note Taking App API")
 async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Global exception on {request.method} {request.url}: {exc}")
     logger.error(f"Exception traceback: {traceback.format_exc()}")
+    
+    # Close db connection on error to prevent "Event loop is closed" errors
+    await close_db_connection()
+    
     return JSONResponse(
         status_code=500,
         content={"detail": f"Internal server error: {str(exc)}"}
@@ -240,7 +287,7 @@ async def test_post(data: dict):
 
 # Auth endpoints
 @app.post("/api/auth/signup", response_model=UserPublic)
-async def signup(user_data: UserCreate, db = Depends(get_database)):
+async def signup(user_data: UserCreate, db = Depends(get_database_safe)):
     """Register a new user"""
     try:
         logger.info(f"Signup attempt for email: {user_data.email}")
@@ -298,32 +345,37 @@ async def signup(user_data: UserCreate, db = Depends(get_database)):
         
         # Insert user
         result = await db.users.insert_one(user_dict)
-        logger.info(f"User created successfully with ID: {result.inserted_id}")
+        user_id = str(result.inserted_id)
+        logger.info(f"User created successfully with ID: {user_id}")
         
         # If this is a child with a parent, update parent's children list
         if user_dict["parent_id"]:
             await db.users.update_one(
                 {"_id": ObjectId(user_dict["parent_id"])},
-                {"$push": {"children_ids": str(result.inserted_id)}}
+                {"$push": {"children_ids": user_id}}
             )
             logger.info(f"Updated parent's children list")
         
-        # Return user data
-        user_dict["id"] = str(result.inserted_id)
-        return UserPublic(**user_dict)
+        # Prepare response data
+        user_dict["id"] = user_id
+        response_data = UserPublic(**user_dict)
+        
+        logger.info(f"Signup successful for user: {user_data.email}")
+        return response_data
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Signup error: {e}")
         logger.error(f"Signup traceback: {traceback.format_exc()}")
+        await close_db_connection()  # Clean up connection on error
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Registration failed: {str(e)}"
         )
 
 @app.post("/api/auth/signin", response_model=Token)
-async def signin(login_data: LoginRequest, db = Depends(get_database)):
+async def signin(login_data: LoginRequest, db = Depends(get_database_safe)):
     """Authenticate user and return access token"""
     try:
         logger.info(f"Signin attempt for email: {login_data.email}")
@@ -350,14 +402,16 @@ async def signin(login_data: LoginRequest, db = Depends(get_database)):
             data={"sub": str(user["_id"]), "role": user["role"]}
         )
         
+        response_data = {"access_token": access_token, "token_type": "bearer"}
         logger.info(f"Signin successful for user: {login_data.email}")
-        return {"access_token": access_token, "token_type": "bearer"}
+        return response_data
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Signin error: {e}")
         logger.error(f"Signin traceback: {traceback.format_exc()}")
+        await close_db_connection()  # Clean up connection on error
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Login failed: {str(e)}"
@@ -380,7 +434,7 @@ async def get_current_user_info(current_user = Depends(get_current_user)):
 @app.get("/api/folders/", response_model=List[FolderPublic])
 async def get_folders(
     current_user: User = Depends(get_current_user),
-    db = Depends(get_database)
+    db = Depends(get_database_safe)
 ):
     """Get all folders for current user (or their children if parent)"""
     query = {}
@@ -423,7 +477,7 @@ async def get_folders(
 async def create_folder(
     folder_data: FolderCreate,
     current_user: User = Depends(get_current_child_user),
-    db = Depends(get_database)
+    db = Depends(get_database_safe)
 ):
     """Create a new folder (children only)"""
     # Check if parent folder exists and belongs to user (if specified)
