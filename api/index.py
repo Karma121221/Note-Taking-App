@@ -17,6 +17,8 @@ try:
 except Exception as e:
     print(f"Failed to import settings: {e}")
     logger.error(f"Settings import error: {e}")
+    # Re-raise the error to prevent the app from starting with broken config
+    raise
 
 try:
     from app.api.main import api_router
@@ -24,13 +26,7 @@ try:
 except Exception as e:
     print(f"Failed to import API router: {e}")
     logger.error(f"API router import error: {e}")
-
-try:
-    from app.core.database import connect_to_mongo, close_mongo_connection
-    print("Database functions imported successfully")
-except Exception as e:
-    print(f"Failed to import database functions: {e}")
-    logger.error(f"Database import error: {e}")
+    raise
 
 # Create FastAPI instance
 app = FastAPI(
@@ -40,27 +36,28 @@ app = FastAPI(
 )
 
 # Set up CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+try:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    print(f"CORS configured with origins: {settings.ALLOWED_ORIGINS}")
+except Exception as e:
+    print(f"Failed to configure CORS: {e}")
+    logger.error(f"CORS configuration error: {e}")
+    raise
 
 # Include API router
-app.include_router(api_router, prefix="/api")
-
-@app.on_event("startup")
-async def startup_event():
-    print("Starting up API...")
-    await connect_to_mongo()
-    print("Connected to MongoDB")
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    print("Shutting down API...")
-    await close_mongo_connection()
+try:
+    app.include_router(api_router, prefix="/api")
+    print("API router included successfully")
+except Exception as e:
+    print(f"Failed to include API router: {e}")
+    logger.error(f"Router inclusion error: {e}")
+    raise
 
 # Basic endpoints
 @app.get("/")

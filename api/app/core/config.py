@@ -15,6 +15,31 @@ for env_path in env_paths:
         load_dotenv(env_path)
         break
 
+def get_allowed_origins() -> List[str]:
+    """Get CORS allowed origins dynamically"""
+    origins = [
+        "http://localhost:3000", 
+        "http://localhost:5173", 
+        "http://localhost:5174",
+    ]
+    
+    # Add Vercel URL if available
+    vercel_url = os.getenv("VERCEL_URL")
+    if vercel_url:
+        origins.extend([
+            f"https://{vercel_url}",
+            vercel_url if vercel_url.startswith("https://") else f"https://{vercel_url}",
+        ])
+    
+    # Add your known production domain
+    origins.append("https://note-taking-app-mu-six.vercel.app")
+    
+    # For development/testing, allow all origins
+    if os.getenv("NODE_ENV") != "production":
+        origins.append("*")
+    
+    return list(set(origins))  # Remove duplicates
+
 class Settings(BaseSettings):
     # Database settings
     MONGO_URI: str = os.getenv("MONGO_URI", "mongodb://localhost:27017")
@@ -25,31 +50,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
     ALGORITHM: str = "HS256"
     
-    # CORS settings - Include both local development and production URLs
-    @property
-    def ALLOWED_ORIGINS(self) -> List[str]:
-        origins = [
-            "http://localhost:3000", 
-            "http://localhost:5173", 
-            "http://localhost:5174",
-        ]
-        
-        # Add Vercel URL if available
-        vercel_url = os.getenv("VERCEL_URL")
-        if vercel_url:
-            origins.extend([
-                f"https://{vercel_url}",
-                vercel_url if vercel_url.startswith("https://") else f"https://{vercel_url}",
-            ])
-        
-        # Add your known production domain
-        origins.append("https://note-taking-app-mu-six.vercel.app")
-        
-        # For development/testing, allow all origins
-        if os.getenv("NODE_ENV") != "production":
-            origins.append("*")
-        
-        return list(set(origins))  # Remove duplicates
+    # CORS settings
+    ALLOWED_ORIGINS: List[str] = get_allowed_origins()
     
     # Security settings
     BCRYPT_ROUNDS: int = 12
