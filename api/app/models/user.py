@@ -49,7 +49,7 @@ class UserPublic(BaseModel):
     email: EmailStr
     name: str
     role: UserRole
-    family_code: Optional[str] = None  # Only shown for parents
+    family_code: Optional[str] = None
     created_at: datetime
 
 # Utility functions for family code management

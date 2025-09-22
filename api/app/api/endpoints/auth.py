@@ -75,8 +75,15 @@ async def signup(user_data: UserCreate, db = Depends(get_database)):
         )
     
     # Return user data
-    user_dict["id"] = str(result.inserted_id)
-    return UserPublic(**user_dict)
+    user_public_data = {
+        "id": str(result.inserted_id),
+        "email": user_dict["email"],
+        "name": user_dict["name"],
+        "role": user_dict["role"],
+        "family_code": user_dict.get("family_code"),
+        "created_at": user_dict["created_at"]
+    }
+    return UserPublic(**user_public_data)
 
 @router.post("/signin", response_model=Token)
 async def signin(login_data: LoginRequest, db = Depends(get_database)):

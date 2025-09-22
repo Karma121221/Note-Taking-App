@@ -1,4 +1,5 @@
 from motor.motor_asyncio import AsyncIOMotorClient
+from fastapi import HTTPException, status
 from app.core.config import settings
 import logging
 from typing import Optional
@@ -35,7 +36,10 @@ async def get_database():
         # Reset client on connection failure
         global _client
         _client = None
-        raise
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database service temporarily unavailable"
+        )
 
 # Legacy connection functions for compatibility (now no-ops in serverless)
 async def connect_to_mongo():
