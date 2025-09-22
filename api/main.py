@@ -959,3 +959,31 @@ async def delete_note(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete note"
         )
+
+# Tags endpoints
+@app.get("/api/tags/", response_model=List[str])
+async def get_all_tags(
+    current_user: User = Depends(get_current_user),
+    db = Depends(get_database_safe)
+):
+    """Get all unique tags used by the user (or their children if parent)"""
+    match_stage = {}
+
+    # Determine whose tags to fetch based on user role
+    if current_user.role == UserRole.CHILD:
+        match_stage["user_id"] = current_user.id
+    elif current_user.role == UserRole.PARENT:
+        if current_user.children_ids:
+            match_stage["user_id"] = {"$in": current_user.children_ids}
+        else:
+            return []
+
+    pipeline = [
+        {"$match": match_stage},
+        {"$unwind": "$tags"},
+        {"$group": {"_id": "$tags"}},
+        {"$sort": {"_id": 1}}
+    ]
+
+    tags = await db.notes.aggregate(pipeline).to_list(length=None)
+    return [tag["_id"] for tag in tags]
