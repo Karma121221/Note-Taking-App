@@ -57,9 +57,17 @@ const FamilyManagement = () => {
 
       if (user?.role === 'parent') {
         console.log('👨‍👩‍👧‍👦 Parent user detected');
-        // If family data is already available in user object, use it
-        if (user.family_code !== undefined) {
-          console.log('📋 Using family data from user object:', {
+
+        // Always fetch fresh data from API to ensure we have the latest family code
+        try {
+          console.log('📡 Fetching family dashboard from API...');
+          const response = await apiClient.get('/family/dashboard');
+          console.log('📊 API dashboard response:', response.data);
+          setDashboard(response.data);
+        } catch (error) {
+          console.error('❌ Error fetching family dashboard:', error);
+          // Fallback to user object data if API fails
+          console.log('📋 Using family data from user object as fallback:', {
             family_code: user.family_code,
             family_code_expires: user.family_code_expires,
             children_count: user.children?.length || 0
@@ -69,12 +77,6 @@ const FamilyManagement = () => {
             family_code_expires: user.family_code_expires || null,
             children: user.children || []
           });
-        } else {
-          console.log('📡 Fetching family dashboard from API...');
-          // Otherwise fetch from API
-          const response = await apiClient.get('/family/dashboard');
-          console.log('📊 API dashboard response:', response.data);
-          setDashboard(response.data);
         }
       } else if (user?.role === 'child') {
         console.log('👶 Child user detected, fetching parent info...');
@@ -112,16 +114,25 @@ const FamilyManagement = () => {
       console.log('✅ Generate code response:', response.data);
 
       const familyCode = response.data.family_code;
+      const expiresAt = response.data.expires_at;
+
       if (familyCode) {
         setSuccess(`New family code generated successfully! Code: ${familyCode}`);
+
+        // Update dashboard immediately with the generated code
+        setDashboard(prevDashboard => ({
+          ...prevDashboard,
+          family_code: familyCode,
+          family_code_expires: expiresAt
+        }));
+
+        console.log('✅ Dashboard updated with new family code:', familyCode);
       } else {
         setSuccess('New family code generated successfully!');
       }
 
       setGenerateDialog(false);
       setExpirationDays('');
-      console.log('🔄 Fetching updated family data...');
-      await fetchData();
       console.log('✅ Family code generation completed successfully');
     } catch (error) {
       console.error('❌ Failed to generate family code:', error.response?.data || error.message);
