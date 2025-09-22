@@ -47,7 +47,7 @@ async def signup(user_data: UserCreate, db = Depends(get_database)):
         while await db.users.find_one({"family_code": family_code}):
             family_code = generate_family_code()
         user_dict["family_code"] = family_code
-        logger.info(f"DEBUG: Generated family code {family_code} for parent {user_data.email}")
+        logger.info(f"Generated family code for parent: {user_data.email}")
     
     # Handle family code linking for children
     if user_data.family_code and user_data.role == UserRole.CHILD:
@@ -66,9 +66,7 @@ async def signup(user_data: UserCreate, db = Depends(get_database)):
             )
     
     # Insert user
-    logger.info(f"DEBUG: Inserting user with data: {user_dict}")
     result = await db.users.insert_one(user_dict)
-    logger.info(f"DEBUG: User inserted with ID: {result.inserted_id}")
 
     # If this is a child with a parent, update parent's children list
     if user_dict["parent_id"]:
@@ -76,10 +74,6 @@ async def signup(user_data: UserCreate, db = Depends(get_database)):
             {"_id": ObjectId(user_dict["parent_id"])},
             {"$push": {"children_ids": str(result.inserted_id)}}
         )
-
-    # Verify the inserted document has the family code
-    inserted_user = await db.users.find_one({"_id": result.inserted_id})
-    logger.info(f"DEBUG: Inserted user verification: family_code={inserted_user.get('family_code')}, role={inserted_user.get('role')}")
 
     # Return user data
     user_public_data = {
@@ -90,7 +84,6 @@ async def signup(user_data: UserCreate, db = Depends(get_database)):
         "family_code": user_dict.get("family_code"),
         "created_at": user_dict["created_at"]
     }
-    logger.info(f"DEBUG: Returning user public data with family_code: {user_public_data.get('family_code')}")
     return UserPublic(**user_public_data)
 
 @router.post("/signin", response_model=Token)

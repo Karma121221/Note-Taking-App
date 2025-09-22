@@ -22,16 +22,8 @@ import traceback
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Log environment information at startup
-logger.info("=== APPLICATION STARTUP DEBUG INFO ===")
-logger.info(f"Environment: {os.getenv('VERCEL_ENV', 'development')}")
-logger.info(f"Python path: {os.getcwd()}")
-logger.info(f"Files in current directory: {os.listdir('.')}")
-logger.info(f"MONGO_URI env var: {'MONGO_URI' in os.environ}")
-logger.info(f"SECRET_KEY env var: {'SECRET_KEY' in os.environ}")
-logger.info(f"All env vars starting with MONGO: {[k for k in os.environ.keys() if k.startswith('MONGO')]}")
-logger.info(f"All env vars starting with SECRET: {[k for k in os.environ.keys() if k.startswith('SECRET')]}")
-logger.info("=== END DEBUG INFO ===")
+# Log basic startup information
+logger.info(f"Starting Note Taking App API in {os.getenv('VERCEL_ENV', 'development')} environment")
 
 # Settings
 class Settings(BaseSettings):

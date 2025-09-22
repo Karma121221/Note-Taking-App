@@ -24,22 +24,15 @@ def get_mongo_client() -> AsyncIOMotorClient:
 async def get_database():
     """Get database instance for the current request"""
     try:
-        # Log the environment info for debugging
-        logger.info(f"DEBUG: Getting database - MONGO_URI: {settings.MONGO_URI[:20]}...")
-        logger.info(f"DEBUG: Database name: {settings.DATABASE_NAME}")
-
         client = get_mongo_client()
         db = client[settings.DATABASE_NAME]
 
         # Test connection with a simple ping
-        logger.info("DEBUG: Testing database connection...")
         await client.admin.command('ping')
-        logger.info("DEBUG: Database connection successful")
 
         return db
     except Exception as e:
         logger.error(f"Database connection error: {e}")
-        logger.error(f"DEBUG: Failed to connect to MongoDB at {settings.MONGO_URI[:20]}...")
         # Reset client on connection failure
         global _client
         _client = None
