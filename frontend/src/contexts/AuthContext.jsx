@@ -89,7 +89,7 @@ export const AuthProvider = ({ children }) => {
           if (userData.role === 'parent') {
             try {
               console.log('👨‍👩‍👧‍👦 Fetching fresh family dashboard for parent...');
-              const familyResponse = await authAxios.get('/family/dashboard');
+              const familyResponse = await authAxios.get('/api/family/dashboard');
               const familyData = familyResponse.data;
 
               console.log('📊 Family dashboard response:', familyData);
@@ -154,7 +154,7 @@ export const AuthProvider = ({ children }) => {
       if (userResponse.data.role === 'parent') {
         try {
           console.log('👨‍👩‍👧‍👦 Fetching family dashboard for parent...');
-          const familyResponse = await authAxios.get('/family/dashboard');
+          const familyResponse = await authAxios.get('/api/family/dashboard');
           familyData = familyResponse.data;
           console.log('📊 Family dashboard response:', familyData);
         } catch (familyError) {

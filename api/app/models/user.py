@@ -50,6 +50,7 @@ class UserPublic(BaseModel):
     name: str
     role: UserRole
     family_code: Optional[str] = None
+    family_code_expires: Optional[datetime] = None
     created_at: datetime
 
 # Utility functions for family code management

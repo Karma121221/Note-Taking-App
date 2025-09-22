@@ -527,15 +527,30 @@ async def get_current_user_info(current_user = Depends(get_current_user)):
             user_dict["family_code_expires"] = getattr(current_user, 'family_code_expires', None)
             user_dict["children_ids"] = getattr(current_user, 'children_ids', [])
 
+        # Handle missing attributes gracefully
+        if 'family_code_expires' not in user_dict:
+            user_dict["family_code_expires"] = None
+            logger.warning(f"User {current_user.id} missing family_code_expires attribute, defaulting to None")
+
+        logger.info(f"User info retrieved successfully for {current_user.email}")
         return UserPublic(**user_dict)
     except Exception as e:
         logger.error(f"Error getting user info: {e}")
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get user info: {str(e)}"
         )
 
-# Family endpoints
+# Family endpoints - Legacy route handler for old frontend calls
+@app.post("/family/generate-code")
+async def legacy_generate_family_code():
+    """Handle legacy frontend calls to old route"""
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Please use /api/family/generate-code instead"
+    )
+
 @app.post("/api/family/generate-code")
 async def generate_family_code_endpoint(
     code_data: dict,
@@ -596,6 +611,14 @@ async def generate_family_code_endpoint(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate family code: {str(e)}"
         )
+
+@app.post("/family/join-family")
+async def legacy_join_family():
+    """Handle legacy frontend calls to old route"""
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Please use /api/family/join-family instead"
+    )
 
 @app.post("/api/family/join-family")
 async def join_family(
@@ -698,6 +721,15 @@ async def join_family(
             detail=f"Failed to join family: {str(e)}"
         )
 
+# Legacy family endpoints
+@app.get("/family/dashboard")
+async def legacy_family_dashboard():
+    """Handle legacy frontend calls to old route"""
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Please use /api/family/dashboard instead"
+    )
+
 @app.get("/api/family/dashboard")
 async def get_parent_dashboard(
     current_user: User = Depends(get_current_parent_user),
@@ -754,6 +786,14 @@ async def get_parent_dashboard(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get dashboard: {str(e)}"
         )
+
+@app.get("/family/my-parent")
+async def legacy_my_parent():
+    """Handle legacy frontend calls to old route"""
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Please use /api/family/my-parent instead"
+    )
 
 @app.get("/api/family/my-parent")
 async def get_my_parent(
@@ -1011,6 +1051,14 @@ async def update_note(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update note"
         )
+
+@app.delete("/family/remove-child/{child_id}")
+async def legacy_remove_child(child_id: str):
+    """Handle legacy frontend calls to old route"""
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Please use /api/family/remove-child/{child_id} instead"
+    )
 
 @app.delete("/api/notes/{note_id}")
 async def delete_note(

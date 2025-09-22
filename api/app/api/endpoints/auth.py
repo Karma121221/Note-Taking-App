@@ -81,6 +81,7 @@ async def signup(user_data: UserCreate, db = Depends(get_database)):
         "name": user_dict["name"],
         "role": user_dict["role"],
         "family_code": user_dict.get("family_code"),
+        "family_code_expires": user_dict.get("family_code_expires"),
         "created_at": user_dict["created_at"]
     }
     return UserPublic(**user_public_data)
