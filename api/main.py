@@ -17,6 +17,7 @@ import string
 import random
 import traceback
 
+
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -314,6 +315,14 @@ async def get_current_child_user(current_user = Depends(get_current_user)):
         )
     return current_user
 
+async def get_current_parent_user(current_user = Depends(get_current_user)):
+    if current_user.role != UserRole.PARENT:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only parents can perform this action"
+        )
+    return current_user
+
 async def close_db_connection():
     """Close database connection (no-op in serverless - connections are per-request)"""
     # In serverless environments, connections are created per-request and closed automatically
@@ -323,6 +332,7 @@ async def close_db_connection():
 
 # FastAPI app
 app = FastAPI(title="Note Taking App API")
+
 
 # Global exception handler
 @app.exception_handler(Exception)
@@ -508,13 +518,176 @@ async def get_current_user_info(current_user = Depends(get_current_user)):
     """Get current user information"""
     try:
         logger.info(f"Getting user info for: {current_user.email}")
-        return current_user
+
+        # Convert the user object to dict and include family data for parents
+        user_dict = current_user.dict()
+        if current_user.role == UserRole.PARENT:
+            # Ensure family_code is included in response
+            user_dict["family_code"] = getattr(current_user, 'family_code', None)
+            user_dict["family_code_expires"] = getattr(current_user, 'family_code_expires', None)
+            user_dict["children_ids"] = getattr(current_user, 'children_ids', [])
+
+        return UserPublic(**user_dict)
     except Exception as e:
         logger.error(f"Error getting user info: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get user info: {str(e)}"
         )
+
+# Family endpoints
+@app.post("/api/family/generate-code")
+async def generate_family_code_endpoint(
+    code_data: dict,
+    current_user: User = Depends(get_current_parent_user),
+    db = Depends(get_database_safe)
+):
+    """Generate a new family code for parents"""
+    # Generate unique family code
+    family_code = generate_family_code()
+
+    # Ensure uniqueness by checking database
+    while await db.users.find_one({"family_code": family_code}):
+        family_code = generate_family_code()
+
+    # Calculate expiration if specified
+    expires_at = None
+    if code_data.get("expires_in_days"):
+        expires_at = datetime.utcnow() + timedelta(days=code_data["expires_in_days"])
+
+    # Update user with new family code
+    await db.users.update_one(
+        {"_id": ObjectId(current_user.id)},
+        {
+            "$set": {
+                "family_code": family_code,
+                "family_code_expires": expires_at,
+                "updated_at": datetime.utcnow()
+            }
+        }
+    )
+
+    return {"family_code": family_code, "expires_at": expires_at}
+
+@app.post("/api/family/join-family")
+async def join_family(
+    join_data: dict,
+    current_user: User = Depends(get_current_child_user),
+    db = Depends(get_database_safe)
+):
+    """Allow a child to join a family using a family code"""
+    # Check if child is already linked to a parent
+    if current_user.parent_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Already linked to a parent account"
+        )
+
+    # Find parent with this family code
+    parent = await db.users.find_one({
+        "family_code": join_data["family_code"],
+        "role": UserRole.PARENT
+    })
+
+    if not parent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid family code"
+        )
+
+    # Check if family code has expired
+    if parent.get("family_code_expires") and parent["family_code_expires"] < datetime.utcnow():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Family code has expired"
+        )
+
+    parent_id = str(parent["_id"])
+
+    # Update child's parent_id
+    await db.users.update_one(
+        {"_id": ObjectId(current_user.id)},
+        {
+            "$set": {
+                "parent_id": parent_id,
+                "updated_at": datetime.utcnow()
+            }
+        }
+    )
+
+    # Add child to parent's children_ids
+    await db.users.update_one(
+        {"_id": ObjectId(parent_id)},
+        {
+            "$push": {"children_ids": current_user.id},
+            "$set": {"updated_at": datetime.utcnow()}
+        }
+    )
+
+    return {"message": "Successfully joined family", "parent_name": parent["name"]}
+
+@app.get("/api/family/dashboard")
+async def get_parent_dashboard(
+    current_user: User = Depends(get_current_parent_user),
+    db = Depends(get_database_safe)
+):
+    """Get parent dashboard with family code and children info"""
+    # Get children information
+    children = []
+    if current_user.children_ids:
+        children_docs = await db.users.find({
+            "_id": {"$in": [ObjectId(child_id) for child_id in current_user.children_ids]},
+            "role": UserRole.CHILD
+        }).to_list(length=100)
+
+        children = [
+            {
+                "id": str(child["_id"]),
+                "name": child["name"],
+                "email": child["email"],
+                "created_at": child["created_at"]
+            }
+            for child in children_docs
+        ]
+
+    return {
+        "family_code": current_user.family_code or "No code generated",
+        "family_code_expires": current_user.family_code_expires,
+        "children": children
+    }
+
+@app.get("/api/family/my-parent")
+async def get_my_parent(
+    current_user: User = Depends(get_current_child_user),
+    db = Depends(get_database_safe)
+):
+    """Get information about the child's parent"""
+    if not current_user.parent_id:
+        return {"parent": None, "message": "Not linked to any parent account"}
+
+    parent = await db.users.find_one({
+        "_id": ObjectId(current_user.parent_id),
+        "role": UserRole.PARENT
+    })
+
+    if not parent:
+        # Parent was deleted, cleanup child's parent_id
+        await db.users.update_one(
+            {"_id": ObjectId(current_user.id)},
+            {
+                "$unset": {"parent_id": ""},
+                "$set": {"updated_at": datetime.utcnow()}
+            }
+        )
+        return {"parent": None, "message": "Parent account no longer exists"}
+
+    return {
+        "parent": {
+            "id": str(parent["_id"]),
+            "name": parent["name"],
+            "email": parent["email"]
+        }
+    }
 
 # Folders endpoints
 @app.get("/api/folders/", response_model=List[FolderPublic])

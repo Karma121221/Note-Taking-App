@@ -75,8 +75,33 @@ export const AuthProvider = ({ children }) => {
         const savedUser = localStorage.getItem('user');
 
         if (token && savedUser) {
-          setUser(JSON.parse(savedUser));
+          const userData = JSON.parse(savedUser);
           authAxios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+
+          // Fetch fresh family data for parents if not already present
+          if (userData.role === 'parent' && !userData.family_code) {
+            try {
+              const familyResponse = await authAxios.get('/family/dashboard');
+              const familyData = familyResponse.data;
+
+              // Update user data with family information
+              const updatedUserData = {
+                ...userData,
+                family_code: familyData.family_code,
+                family_code_expires: familyData.family_code_expires,
+                children: familyData.children || []
+              };
+
+              localStorage.setItem('user', JSON.stringify(updatedUserData));
+              setUser(updatedUserData);
+              console.log('Updated parent user with family data:', updatedUserData);
+            } catch (familyError) {
+              console.warn('Failed to fetch family dashboard for existing user:', familyError);
+              setUser(userData); // Still set the user even if family data fetch fails
+            }
+          } else {
+            setUser(userData);
+          }
         }
       } catch (error) {
         console.error('Auth check failed:', error);
@@ -98,17 +123,37 @@ export const AuthProvider = ({ children }) => {
       });
 
       const { access_token } = response.data;
-      
+
       // Get user info
       authAxios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
       const userResponse = await authAxios.get('/auth/me');
-      
+
+      // Fetch family dashboard data for parents
+      let familyData = null;
+      if (userResponse.data.role === 'parent') {
+        try {
+          const familyResponse = await authAxios.get('/family/dashboard');
+          familyData = familyResponse.data;
+          console.log('Family dashboard fetched:', familyData);
+        } catch (familyError) {
+          console.warn('Failed to fetch family dashboard:', familyError);
+        }
+      }
+
+      // Merge family data with user data
+      const userData = {
+        ...userResponse.data,
+        family_code: familyData?.family_code || null,
+        family_code_expires: familyData?.family_code_expires || null,
+        children: familyData?.children || []
+      };
+
       // Save to localStorage
       localStorage.setItem('token', access_token);
-      localStorage.setItem('user', JSON.stringify(userResponse.data));
-      
-      setUser(userResponse.data);
-      return userResponse.data;
+      localStorage.setItem('user', JSON.stringify(userData));
+
+      setUser(userData);
+      return userData;
     } catch (error) {
       console.error('Login failed:', error);
       throw error;
@@ -123,17 +168,17 @@ export const AuthProvider = ({ children }) => {
         password,
         role,
       };
-      
+
       // Add family code if provided for children
       if (role === 'child' && familyCode.trim()) {
         requestData.family_code = familyCode.trim().toUpperCase();
       }
-      
+
       console.log('Registering with data:', requestData);
       const response = await authAxios.post('/auth/signup', requestData);
       console.log('Registration response:', response.data);
 
-      // Auto-login after registration
+      // Auto-login after registration - this will now fetch family data for parents
       return await login(email, password);
     } catch (error) {
       console.error('Registration failed:', error);

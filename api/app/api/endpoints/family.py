@@ -56,20 +56,40 @@ async def join_family(
     db = Depends(get_database)
 ):
     """Allow a child to join a family using a family code"""
+    logger.info(f"DEBUG: Child {current_user.id} attempting to join family with code: {join_data.family_code}")
+
     # Check if child is already linked to a parent
     if current_user.parent_id:
+        logger.warning(f"DEBUG: Child {current_user.id} already linked to parent {current_user.parent_id}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Already linked to a parent account"
         )
-    
+
     # Find parent with this family code
+    logger.info(f"DEBUG: Searching for parent with family_code: {join_data.family_code}")
     parent = await db.users.find_one({
         "family_code": join_data.family_code,
         "role": UserRole.PARENT
     })
-    
+
+    logger.info(f"DEBUG: Parent search result: {parent}")
+
     if not parent:
+        # Debug: Let's see what parents exist with any family code
+        all_parents = await db.users.find({"role": UserRole.PARENT}).to_list(length=10)
+        logger.error(f"DEBUG: No parent found with family code {join_data.family_code}")
+        logger.error(f"DEBUG: Available parents in database: {len(all_parents)}")
+        for p in all_parents:
+            logger.error(f"DEBUG: Parent {p.get('name')} has family_code: {p.get('family_code')}")
+
+        # Check if database is working at all
+        try:
+            total_users = await db.users.count_documents({})
+            logger.error(f"DEBUG: Total users in database: {total_users}")
+        except Exception as db_error:
+            logger.error(f"DEBUG: Database query failed: {db_error}")
+
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Invalid family code"

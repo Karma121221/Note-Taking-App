@@ -145,17 +145,3 @@ npm run dev
 3. **Access App:** Open [http://localhost:5173](http://localhost:5173)
 4. **Sign Up:** Register as parent or child, link accounts via family code
 5. **Create Notes/Folders:** Children can create/edit, parents have read-only access
-
----
-
-## 🤝 Contribution
-
-- Fork the repo, create a feature branch, submit PRs
-- Follow code style and add comments/documentation
-- Run `npm run lint` for frontend, use type hints for backend
-
----
-
-## 📄 License
-
-MIT

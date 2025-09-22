@@ -54,8 +54,18 @@ const FamilyManagement = () => {
     try {
       setLoading(true);
       if (user?.role === 'parent') {
-        const response = await axios.get('/family/dashboard');
-        setDashboard(response.data);
+        // If family data is already available in user object, use it
+        if (user.family_code !== undefined) {
+          setDashboard({
+            family_code: user.family_code || null,
+            family_code_expires: user.family_code_expires || null,
+            children: user.children || []
+          });
+        } else {
+          // Otherwise fetch from API
+          const response = await axios.get('/family/dashboard');
+          setDashboard(response.data);
+        }
       } else if (user?.role === 'child') {
         const response = await axios.get('/family/my-parent');
         setParentInfo(response.data);
