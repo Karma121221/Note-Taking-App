@@ -200,6 +200,25 @@ class FolderPublic(FolderBase):
     updated_at: datetime
     owner_name: Optional[str] = None
 
+class NoteBase(BaseModel):
+    title: str
+    content: str
+    folder_id: Optional[str] = None
+
+class NoteCreate(NoteBase):
+    pass
+
+class NoteUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    folder_id: Optional[str] = None
+
+class NotePublic(NoteBase):
+    id: str
+    user_id: str
+    created_at: datetime
+    updated_at: datetime
+
 # Utility functions
 def generate_family_code() -> str:
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
@@ -568,5 +587,192 @@ async def create_folder(
     
     result = await db.folders.insert_one(folder_dict)
     folder_dict["id"] = str(result.inserted_id)
-    
+
     return FolderPublic(**folder_dict)
+
+# Notes endpoints
+@app.get("/api/notes/", response_model=List[NotePublic])
+async def get_notes(
+    current_user: User = Depends(get_current_user),
+    db = Depends(get_database_safe)
+):
+    """Get all notes for current user (or their children if parent)"""
+    query = {}
+
+    # Determine whose notes to fetch based on user role
+    if current_user.role == UserRole.CHILD:
+        query["user_id"] = current_user.id
+    elif current_user.role == UserRole.PARENT:
+        # Get notes from all children
+        if current_user.children_ids:
+            query["user_id"] = {"$in": current_user.children_ids}
+        else:
+            return []  # No children linked
+
+    notes = await db.notes.find(query).sort("created_at", -1).to_list(length=100)
+    result = []
+    for note in notes:
+        note["id"] = str(note["_id"])
+        result.append(NotePublic(**note))
+
+    return result
+
+@app.post("/api/notes/", response_model=NotePublic)
+async def create_note(
+    note_data: NoteCreate,
+    current_user: User = Depends(get_current_user),
+    db = Depends(get_database_safe)
+):
+    """Create a new note"""
+    # Check if folder exists and belongs to user (if specified)
+    if note_data.folder_id:
+        folder = await db.folders.find_one({
+            "_id": ObjectId(note_data.folder_id),
+            "user_id": current_user.id
+        })
+        if not folder:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Folder not found"
+            )
+
+    note_dict = note_data.dict()
+    note_dict.update({
+        "user_id": current_user.id,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow()
+    })
+
+    result = await db.notes.insert_one(note_dict)
+    note_dict["id"] = str(result.inserted_id)
+
+    return NotePublic(**note_dict)
+
+@app.get("/api/notes/{note_id}", response_model=NotePublic)
+async def get_note(
+    note_id: str,
+    current_user: User = Depends(get_current_user),
+    db = Depends(get_database_safe)
+):
+    """Get a specific note"""
+    try:
+        note = await db.notes.find_one({
+            "_id": ObjectId(note_id),
+            "user_id": current_user.id
+        })
+        if not note:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Note not found"
+            )
+
+        note["id"] = str(note["_id"])
+        return NotePublic(**note)
+    except Exception as e:
+        logger.error(f"Error getting note {note_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get note"
+        )
+
+@app.put("/api/notes/{note_id}", response_model=NotePublic)
+async def update_note(
+    note_id: str,
+    note_data: NoteUpdate,
+    current_user: User = Depends(get_current_user),
+    db = Depends(get_database_safe)
+):
+    """Update a note"""
+    try:
+        # Check if note exists and belongs to user
+        note = await db.notes.find_one({
+            "_id": ObjectId(note_id),
+            "user_id": current_user.id
+        })
+        if not note:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Note not found"
+            )
+
+        # Update only provided fields
+        update_dict = {"updated_at": datetime.utcnow()}
+        if note_data.title is not None:
+            update_dict["title"] = note_data.title
+        if note_data.content is not None:
+            update_dict["content"] = note_data.content
+        if note_data.folder_id is not None:
+            # Check if folder exists and belongs to user
+            if note_data.folder_id:
+                folder = await db.folders.find_one({
+                    "_id": ObjectId(note_data.folder_id),
+                    "user_id": current_user.id
+                })
+                if not folder:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Folder not found"
+                    )
+            update_dict["folder_id"] = note_data.folder_id
+
+        result = await db.notes.update_one(
+            {"_id": ObjectId(note_id)},
+            {"$set": update_dict}
+        )
+
+        if result.modified_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update note"
+            )
+
+        # Get updated note
+        updated_note = await db.notes.find_one({"_id": ObjectId(note_id)})
+        updated_note["id"] = str(updated_note["_id"])
+        return NotePublic(**updated_note)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating note {note_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update note"
+        )
+
+@app.delete("/api/notes/{note_id}")
+async def delete_note(
+    note_id: str,
+    current_user: User = Depends(get_current_user),
+    db = Depends(get_database_safe)
+):
+    """Delete a note"""
+    try:
+        # Check if note exists and belongs to user
+        note = await db.notes.find_one({
+            "_id": ObjectId(note_id),
+            "user_id": current_user.id
+        })
+        if not note:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Note not found"
+            )
+
+        result = await db.notes.delete_one({"_id": ObjectId(note_id)})
+        if result.deleted_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to delete note"
+            )
+
+        return {"message": "Note deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting note {note_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete note"
+        )
