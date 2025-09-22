@@ -1,34 +1,36 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import sys
 import os
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 print("Starting API import...")
 
-# Add backend to path
-backend_path = os.path.join(os.path.dirname(__file__), '..')
-sys.path.append(backend_path)
-print(f"Added to path: {backend_path}")
-
 try:
-    from backend.app.core.config import settings
+    from app.core.config import settings
     print("Settings imported successfully")
     print(f"MONGO_URI: {settings.MONGO_URI[:20]}...")
     print(f"DATABASE_NAME: {settings.DATABASE_NAME}")
 except Exception as e:
     print(f"Failed to import settings: {e}")
+    logger.error(f"Settings import error: {e}")
 
 try:
-    from backend.app.api.main import api_router
+    from app.api.main import api_router
     print("API router imported successfully")
 except Exception as e:
     print(f"Failed to import API router: {e}")
+    logger.error(f"API router import error: {e}")
 
 try:
-    from backend.app.core.database import connect_to_mongo, close_mongo_connection
+    from app.core.database import connect_to_mongo, close_mongo_connection
     print("Database functions imported successfully")
 except Exception as e:
     print(f"Failed to import database functions: {e}")
+    logger.error(f"Database import error: {e}")
 
 # Create FastAPI instance
 app = FastAPI(
