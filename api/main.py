@@ -730,6 +730,7 @@ async def legacy_family_dashboard():
         detail="Please use /api/family/dashboard instead"
     )
 
+# Family endpoints
 @app.get("/api/family/dashboard")
 async def get_parent_dashboard(
     current_user: User = Depends(get_current_parent_user),

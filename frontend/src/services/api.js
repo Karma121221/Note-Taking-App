@@ -31,6 +31,9 @@ apiClient.interceptors.request.use(
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
+      console.log('🔑 API Request Interceptor - Adding token to:', config.url);
+    } else {
+      console.warn('⚠️ API Request Interceptor - No token found for:', config.url);
     }
     return config;
   },

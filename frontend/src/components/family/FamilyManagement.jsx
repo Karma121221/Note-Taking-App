@@ -30,8 +30,8 @@ import {
   FamilyRestroom,
   Info,
 } from '@mui/icons-material';
-import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
+import { apiClient } from '../../services/api';
 
 const FamilyManagement = () => {
   const { user } = useAuth();
@@ -72,13 +72,13 @@ const FamilyManagement = () => {
         } else {
           console.log('📡 Fetching family dashboard from API...');
           // Otherwise fetch from API
-          const response = await axios.get('/api/family/dashboard');
+          const response = await apiClient.get('/family/dashboard');
           console.log('📊 API dashboard response:', response.data);
           setDashboard(response.data);
         }
       } else if (user?.role === 'child') {
         console.log('👶 Child user detected, fetching parent info...');
-        const response = await axios.get('/api/family/my-parent');
+        const response = await apiClient.get('/family/my-parent');
         console.log('👨‍👩‍👧‍👦 Parent info response:', response.data);
         setParentInfo(response.data);
       } else {
@@ -108,7 +108,7 @@ const FamilyManagement = () => {
       }
 
       console.log('📤 Sending generate-code request with data:', data);
-      const response = await axios.post('/api/family/generate-code', data);
+      const response = await apiClient.post('/family/generate-code', data);
       console.log('✅ Generate code response:', response.data);
 
       const familyCode = response.data.family_code;
@@ -149,7 +149,7 @@ const FamilyManagement = () => {
 
   const removeChild = async (childId) => {
     try {
-      await axios.delete(`/api/family/remove-child/${childId}`);
+      await apiClient.delete(`/family/remove-child/${childId}`);
       setSuccess('Child removed from family');
       setConfirmDialog({ open: false, childId: '', childName: '' });
       fetchData();
@@ -170,7 +170,7 @@ const FamilyManagement = () => {
       }
 
       console.log('📤 Sending join-family request...');
-      const response = await axios.post('/api/family/join-family', { family_code: joinCode });
+      const response = await apiClient.post('/family/join-family', { family_code: joinCode });
       console.log('✅ Join family response:', response.data);
 
       setSuccess(`Successfully joined family! Connected to ${response.data.parent_name}`);
@@ -201,7 +201,7 @@ const FamilyManagement = () => {
 
   const leaveFamily = async () => {
     try {
-      await axios.post('/api/family/leave-family');
+      await apiClient.post('/family/leave-family');
       setSuccess('Successfully left family');
       fetchData();
     } catch (error) {
