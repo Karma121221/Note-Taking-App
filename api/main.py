@@ -1,8 +1,9 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, ValidationError
 from pydantic_settings import BaseSettings
 from passlib.context import CryptContext
 from jose import JWTError, jwt
@@ -14,6 +15,7 @@ import os
 import logging
 import string
 import random
+import traceback
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -52,9 +54,9 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 # Database
-_client: Optional[AsyncIOMotorClient] = None
+_client = None
 
-def get_mongo_client() -> AsyncIOMotorClient:
+def get_mongo_client():
     global _client
     if _client is None:
         _client = AsyncIOMotorClient(settings.MONGO_URI)
@@ -146,38 +148,43 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
 
-def verify_token(token: str) -> Optional[TokenData]:
+def verify_token(token: str):
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         user_id: str = payload.get("sub")
         if user_id is None:
             return None
         return TokenData(user_id=user_id)
-    except JWTError:
+    except JWTError as e:
+        logger.error(f"JWT verification error: {e}")
         return None
 
 # Dependencies
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db = Depends(get_database)
-) -> User:
+):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
     
-    token_data = verify_token(credentials.credentials)
-    if token_data is None:
+    try:
+        token_data = verify_token(credentials.credentials)
+        if token_data is None:
+            raise credentials_exception
+        
+        user = await db.users.find_one({"_id": ObjectId(token_data.user_id)})
+        if user is None:
+            raise credentials_exception
+        
+        return User(**user, id=str(user["_id"]))
+    except Exception as e:
+        logger.error(f"Error in get_current_user: {e}")
         raise credentials_exception
-    
-    user = await db.users.find_one({"_id": ObjectId(token_data.user_id)})
-    if user is None:
-        raise credentials_exception
-    
-    return User(**user, id=str(user["_id"]))
 
-async def get_current_child_user(current_user: User = Depends(get_current_user)) -> User:
+async def get_current_child_user(current_user = Depends(get_current_user)):
     if current_user.role != UserRole.CHILD:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -187,6 +194,25 @@ async def get_current_child_user(current_user: User = Depends(get_current_user))
 
 # FastAPI app
 app = FastAPI(title="Note Taking App API")
+
+# Global exception handler
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Global exception on {request.method} {request.url}: {exc}")
+    logger.error(f"Exception traceback: {traceback.format_exc()}")
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"Internal server error: {str(exc)}"}
+    )
+
+# Validation exception handler
+@app.exception_handler(ValidationError)
+async def validation_exception_handler(request: Request, exc: ValidationError):
+    logger.error(f"Validation error on {request.method} {request.url}: {exc}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": "Validation error", "errors": exc.errors()}
+    )
 
 # CORS
 app.add_middleware(
@@ -206,100 +232,149 @@ async def root():
 async def health():
     return {"status": "healthy", "api": "working"}
 
+@app.post("/api/test-post")
+async def test_post(data: dict):
+    """Test POST endpoint to verify request handling"""
+    logger.info(f"Test POST received: {data}")
+    return {"received": data, "status": "success"}
+
 # Auth endpoints
 @app.post("/api/auth/signup", response_model=UserPublic)
 async def signup(user_data: UserCreate, db = Depends(get_database)):
     """Register a new user"""
-    # Check if user already exists
-    existing_user = await db.users.find_one({"email": user_data.email})
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
-        )
-    
-    # Hash password
-    hashed_password = get_password_hash(user_data.password)
-    
-    # Prepare user data
-    user_dict = {
-        "email": user_data.email,
-        "name": user_data.name,
-        "role": user_data.role,
-        "hashed_password": hashed_password,
-        "children_ids": [],
-        "parent_id": None,
-        "family_code": None,
-        "family_code_expires": None,
-        "created_at": datetime.utcnow(),
-        "updated_at": datetime.utcnow()
-    }
-    
-    # Generate family code for parents
-    if user_data.role == UserRole.PARENT:
-        family_code = generate_family_code()
-        # Ensure uniqueness
-        while await db.users.find_one({"family_code": family_code}):
-            family_code = generate_family_code()
-        user_dict["family_code"] = family_code
-    
-    # Handle family code linking for children
-    if user_data.family_code and user_data.role == UserRole.CHILD:
-        parent = await db.users.find_one({
-            "family_code": user_data.family_code, 
-            "role": UserRole.PARENT
-        })
-        if parent:
-            user_dict["parent_id"] = str(parent["_id"])
-        else:
+    try:
+        logger.info(f"Signup attempt for email: {user_data.email}")
+        
+        # Check if user already exists
+        existing_user = await db.users.find_one({"email": user_data.email})
+        if existing_user:
+            logger.warning(f"Email already registered: {user_data.email}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid family code"
+                detail="Email already registered"
             )
-    
-    # Insert user
-    result = await db.users.insert_one(user_dict)
-    
-    # If this is a child with a parent, update parent's children list
-    if user_dict["parent_id"]:
-        await db.users.update_one(
-            {"_id": ObjectId(user_dict["parent_id"])},
-            {"$push": {"children_ids": str(result.inserted_id)}}
+        
+        # Hash password
+        hashed_password = get_password_hash(user_data.password)
+        
+        # Prepare user data
+        user_dict = {
+            "email": user_data.email,
+            "name": user_data.name,
+            "role": user_data.role,
+            "hashed_password": hashed_password,
+            "children_ids": [],
+            "parent_id": None,
+            "family_code": None,
+            "family_code_expires": None,
+            "created_at": datetime.utcnow(),
+            "updated_at": datetime.utcnow()
+        }
+        
+        # Generate family code for parents
+        if user_data.role == UserRole.PARENT:
+            family_code = generate_family_code()
+            # Ensure uniqueness
+            while await db.users.find_one({"family_code": family_code}):
+                family_code = generate_family_code()
+            user_dict["family_code"] = family_code
+            logger.info(f"Generated family code for parent: {family_code}")
+        
+        # Handle family code linking for children
+        if user_data.family_code and user_data.role == UserRole.CHILD:
+            parent = await db.users.find_one({
+                "family_code": user_data.family_code, 
+                "role": UserRole.PARENT
+            })
+            if parent:
+                user_dict["parent_id"] = str(parent["_id"])
+                logger.info(f"Linked child to parent with family code: {user_data.family_code}")
+            else:
+                logger.warning(f"Invalid family code: {user_data.family_code}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid family code"
+                )
+        
+        # Insert user
+        result = await db.users.insert_one(user_dict)
+        logger.info(f"User created successfully with ID: {result.inserted_id}")
+        
+        # If this is a child with a parent, update parent's children list
+        if user_dict["parent_id"]:
+            await db.users.update_one(
+                {"_id": ObjectId(user_dict["parent_id"])},
+                {"$push": {"children_ids": str(result.inserted_id)}}
+            )
+            logger.info(f"Updated parent's children list")
+        
+        # Return user data
+        user_dict["id"] = str(result.inserted_id)
+        return UserPublic(**user_dict)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Signup error: {e}")
+        logger.error(f"Signup traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Registration failed: {str(e)}"
         )
-    
-    # Return user data
-    user_dict["id"] = str(result.inserted_id)
-    return UserPublic(**user_dict)
 
 @app.post("/api/auth/signin", response_model=Token)
 async def signin(login_data: LoginRequest, db = Depends(get_database)):
     """Authenticate user and return access token"""
-    # Find user by email
-    user = await db.users.find_one({"email": login_data.email})
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password"
+    try:
+        logger.info(f"Signin attempt for email: {login_data.email}")
+        
+        # Find user by email
+        user = await db.users.find_one({"email": login_data.email})
+        if not user:
+            logger.warning(f"User not found: {login_data.email}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password"
+            )
+        
+        # Verify password
+        if not verify_password(login_data.password, user["hashed_password"]):
+            logger.warning(f"Invalid password for user: {login_data.email}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password"
+            )
+        
+        # Create access token
+        access_token = create_access_token(
+            data={"sub": str(user["_id"]), "role": user["role"]}
         )
-    
-    # Verify password
-    if not verify_password(login_data.password, user["hashed_password"]):
+        
+        logger.info(f"Signin successful for user: {login_data.email}")
+        return {"access_token": access_token, "token_type": "bearer"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Signin error: {e}")
+        logger.error(f"Signin traceback: {traceback.format_exc()}")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Login failed: {str(e)}"
         )
-    
-    # Create access token
-    access_token = create_access_token(
-        data={"sub": str(user["_id"]), "role": user["role"]}
-    )
-    
-    return {"access_token": access_token, "token_type": "bearer"}
 
-@app.get("/api/auth/me", response_model=User)
-async def get_current_user_info(current_user: User = Depends(get_current_user)):
+@app.get("/api/auth/me")
+async def get_current_user_info(current_user = Depends(get_current_user)):
     """Get current user information"""
-    return current_user
+    try:
+        logger.info(f"Getting user info for: {current_user.email}")
+        return current_user
+    except Exception as e:
+        logger.error(f"Error getting user info: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get user info: {str(e)}"
+        )
 
 # Folders endpoints
 @app.get("/api/folders/", response_model=List[FolderPublic])
