@@ -169,3 +169,6 @@ export const tagsApi = {
     return response.data;
   }
 };
+
+// Export the base apiClient for direct use
+export { apiClient };
