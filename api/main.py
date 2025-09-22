@@ -22,6 +22,17 @@ import traceback
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Log environment information at startup
+logger.info("=== APPLICATION STARTUP DEBUG INFO ===")
+logger.info(f"Environment: {os.getenv('VERCEL_ENV', 'development')}")
+logger.info(f"Python path: {os.getcwd()}")
+logger.info(f"Files in current directory: {os.listdir('.')}")
+logger.info(f"MONGO_URI env var: {'MONGO_URI' in os.environ}")
+logger.info(f"SECRET_KEY env var: {'SECRET_KEY' in os.environ}")
+logger.info(f"All env vars starting with MONGO: {[k for k in os.environ.keys() if k.startswith('MONGO')]}")
+logger.info(f"All env vars starting with SECRET: {[k for k in os.environ.keys() if k.startswith('SECRET')]}")
+logger.info("=== END DEBUG INFO ===")
+
 # Settings
 class Settings(BaseSettings):
     MONGO_URI: str = os.getenv("MONGO_URI", "mongodb://localhost:27017")
@@ -29,6 +40,13 @@ class Settings(BaseSettings):
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
     ALGORITHM: str = "HS256"
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Debug logging for environment variables
+        logger.info(f"DEBUG: Settings initialized - MONGO_URI available: {bool(self.MONGO_URI)}")
+        logger.info(f"DEBUG: Settings initialized - SECRET_KEY available: {bool(self.SECRET_KEY)}")
+        logger.info(f"DEBUG: Settings initialized - DATABASE_NAME: {self.DATABASE_NAME}")
     
     @property
     def ALLOWED_ORIGINS(self) -> List[str]:
