@@ -72,6 +72,7 @@ flowchart TD
 
 - User authentication for parent/child roles.
 - ![Sign In Screenshot](frontend/public/signin.png) <!-- Replace with actual screenshot -->
+- ![Log In Screenshot](frontend/public/login.png) <!-- Replace with actual screenshot -->
 
 ### 2. Dashboard
 
@@ -82,12 +83,12 @@ flowchart TD
 ### 3. Note Editor
 
 - Markdown editing, checklist support, tag management, folder assignment.
-- ![Note Editor Screenshot](frontend/public/note-editor.png) <!-- Replace with actual screenshot -->
+- ![Note Editor Screenshot](frontend/public/note_editor.png) <!-- Replace with actual screenshot -->
 
 ### 4. Family Management
 
 - Parent dashboard for family code generation, child linking, and viewing children.
-- ![Family Management Screenshot](frontend/public/family-management.png) <!-- Replace with actual screenshot -->
+- ![Family Management Screenshot](frontend/public/family_management.png) <!-- Replace with actual screenshot -->
 
 ---
 
