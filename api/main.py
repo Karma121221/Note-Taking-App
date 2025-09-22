@@ -53,49 +53,34 @@ settings = Settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
-# Database connection for serverless environments
+# Database connection optimized for Vercel serverless
 async def get_mongo_client():
-    """Create a new MongoDB client for each request in serverless"""
+    """Create MongoDB client optimized for Vercel serverless environment"""
     try:
-        logger.info(f"Creating new MongoDB client for serverless with URI: {settings.MONGO_URI[:50]}...")
-        logger.info(f"MongoDB URI length: {len(settings.MONGO_URI)}")
+        # Use direct connection string instead of relying on environment variables
+        # This bypasses potential serverless environment variable issues
+        mongo_uri = "mongodb+srv://namit_thing:heyyup@cluster0.xgtzgla.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 
-        # Log connection parameters
-        connection_params = {
-            "serverSelectionTimeoutMS": 10000,
-            "connectTimeoutMS": 20000,
-            "socketTimeoutMS": 60000,
-            "maxPoolSize": 1,
-            "minPoolSize": 0,
-            "maxIdleTimeMS": 30000,
-            "waitQueueTimeoutMS": 10000,
-            "heartbeatFrequencyMS": 10000,
-            "maxStalenessSeconds": 30,
-            "retryWrites": True,
-            "retryReads": True,
-        }
-        logger.info(f"MongoDB connection parameters: {connection_params}")
+        logger.info(f"Creating MongoDB client with direct URI: {mongo_uri[:30]}...")
 
+        # Simplified connection parameters specifically for Vercel serverless
         client = AsyncIOMotorClient(
-            settings.MONGO_URI,
-            serverSelectionTimeoutMS=10000,  # 10 second timeout for server selection
-            connectTimeoutMS=20000,  # 20 second connection timeout
-            socketTimeoutMS=60000,  # 60 second socket timeout (within Vercel limits)
-            maxPoolSize=1,  # Single connection for serverless
-            minPoolSize=0,  # Don't maintain idle connections
-            maxIdleTimeMS=30000,  # Close connections after 30 seconds of inactivity
-            waitQueueTimeoutMS=10000,  # 10 second wait queue timeout
+            mongo_uri,
+            serverSelectionTimeoutMS=15000,  # 15 seconds for server selection
+            connectTimeoutMS=30000,  # 30 seconds connection timeout
+            socketTimeoutMS=30000,  # 30 seconds socket timeout
+            maxPoolSize=1,  # Single connection only
+            minPoolSize=0,  # No idle connections
+            maxIdleTimeMS=10000,  # Close idle connections quickly
+            waitQueueTimeoutMS=5000,  # 5 second wait timeout
             retryWrites=True,
             retryReads=True,
-            # Add server monitoring for better connection health
-            heartbeatFrequencyMS=10000,  # 10 second heartbeat
-            maxStalenessSeconds=30,  # 30 second max staleness
         )
 
-        logger.info("MongoDB client created successfully")
+        logger.info("MongoDB client created for Vercel serverless")
         return client
     except Exception as e:
-        logger.error(f"Failed to create MongoDB client: {e}")
+        logger.error(f"Failed to create MongoDB client for Vercel: {e}")
         logger.error(f"Exception type: {type(e).__name__}")
         import traceback
         logger.error(f"Full traceback: {traceback.format_exc()}")
@@ -105,19 +90,19 @@ async def get_mongo_client():
         )
 
 async def get_database():
-    """Get database instance optimized for serverless with retry logic"""
+    """Get database instance specifically optimized for Vercel serverless"""
     client = None
-    max_retries = 2
+    max_retries = 3  # Increased retries
     retry_count = 0
 
     while retry_count <= max_retries:
         try:
             client = await get_mongo_client()
-            db_name = settings.DATABASE_NAME
-            logger.info(f"Getting database: {db_name} (attempt {retry_count + 1}/{max_retries + 1})")
+            db_name = "note_taking_app"  # Direct database name
+            logger.info(f"Getting database: {db_name} (attempt {retry_count + 1})")
             db = client[db_name]
 
-            # Test connection with ping - this is crucial for serverless
+            # Test connection with ping - simplified for serverless
             logger.info("Testing database connection with ping...")
             try:
                 ping_result = await client.admin.command('ping')
@@ -125,10 +110,13 @@ async def get_database():
             except Exception as ping_error:
                 logger.error(f"Database ping failed: {ping_error}")
                 if retry_count < max_retries:
-                    logger.info(f"Retrying database connection (attempt {retry_count + 2})...")
+                    logger.info(f"Retrying database connection...")
                     retry_count += 1
                     if client:
                         client.close()
+                    # Add a small delay before retry
+                    import asyncio
+                    await asyncio.sleep(0.5)
                     continue
                 raise ping_error
 
@@ -141,10 +129,13 @@ async def get_database():
             logger.error(f"Full traceback: {traceback.format_exc()}")
 
             if retry_count < max_retries:
-                logger.info(f"Retrying database connection (attempt {retry_count + 2})...")
+                logger.info(f"Retrying database connection...")
                 retry_count += 1
                 if client:
                     client.close()
+                # Add delay before retry
+                import asyncio
+                await asyncio.sleep(0.5)
                 continue
             else:
                 # Close client on final error
@@ -241,11 +232,11 @@ def verify_token(token: str):
         return None
 
 async def get_database_safe():
-    """Safe database getter with proper error handling for serverless"""
+    """Safe database getter optimized for Vercel serverless"""
     client = None
     try:
         client = await get_mongo_client()
-        db = client[settings.DATABASE_NAME]
+        db = client["note_taking_app"]  # Direct database name
 
         # Test connection with ping
         logger.info("Testing database connection with ping (safe mode)...")
@@ -253,7 +244,10 @@ async def get_database_safe():
         logger.info("Database connection successful (safe mode)")
         return db
     except Exception as e:
-        logger.error(f"Failed to get database: {e}")
+        logger.error(f"Failed to get database (safe mode): {e}")
+        logger.error(f"Exception type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         # Close client on error
         if client:
             client.close()

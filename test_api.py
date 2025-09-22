@@ -53,6 +53,19 @@ def test_simple_db_operation():
     print(f"Simple DB operation status: {response.status_code}")
     print(f"Response: {response.json()}")
 
+def test_serverless_function():
+    print("\nTesting basic serverless function...")
+    import requests
+    try:
+        # Test a simple POST without database
+        response = requests.post(f"{base_url}/api/test-post",
+                               json={"test": "serverless"},
+                               timeout=10)
+        print(f"Serverless function status: {response.status_code}")
+        print(f"Response: {response.json()}")
+    except Exception as e:
+        print(f"Serverless function test failed: {e}")
+
 def test_signin():
     print("\nTesting signin endpoint...")
     data = {
@@ -132,6 +145,7 @@ def test_mongo_connection():
 if __name__ == "__main__":
     test_root()
     test_health()
+    test_serverless_function()
     email, password = test_signup()
     test_signin_with_credentials(email, password)
     test_mongo_connection()
