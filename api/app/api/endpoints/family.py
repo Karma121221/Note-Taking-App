@@ -62,13 +62,13 @@ async def join_family(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Already linked to a parent account"
         )
-
+    
     # Find parent with this family code
     parent = await db.users.find_one({
         "family_code": join_data.family_code,
         "role": UserRole.PARENT
     })
-
+    
     if not parent:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

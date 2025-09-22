@@ -22,9 +22,6 @@ import traceback
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Log basic startup information
-logger.info(f"Starting Note Taking App API in {os.getenv('VERCEL_ENV', 'development')} environment")
-
 # Settings
 class Settings(BaseSettings):
     MONGO_URI: str = os.getenv("MONGO_URI", "mongodb://localhost:27017")
@@ -32,13 +29,6 @@ class Settings(BaseSettings):
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
     ALGORITHM: str = "HS256"
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        # Debug logging for environment variables
-        logger.info(f"DEBUG: Settings initialized - MONGO_URI available: {bool(self.MONGO_URI)}")
-        logger.info(f"DEBUG: Settings initialized - SECRET_KEY available: {bool(self.SECRET_KEY)}")
-        logger.info(f"DEBUG: Settings initialized - DATABASE_NAME: {self.DATABASE_NAME}")
     
     @property
     def ALLOWED_ORIGINS(self) -> List[str]:
@@ -553,31 +543,59 @@ async def generate_family_code_endpoint(
     db = Depends(get_database_safe)
 ):
     """Generate a new family code for parents"""
-    # Generate unique family code
-    family_code = generate_family_code()
+    logger.info(f"🔄 Generating family code for user: {current_user.email} (ID: {current_user.id})")
 
-    # Ensure uniqueness by checking database
-    while await db.users.find_one({"family_code": family_code}):
+    try:
+        # Generate unique family code
         family_code = generate_family_code()
+        logger.info(f"🔑 Generated initial family code: {family_code}")
 
-    # Calculate expiration if specified
-    expires_at = None
-    if code_data.get("expires_in_days"):
-        expires_at = datetime.utcnow() + timedelta(days=code_data["expires_in_days"])
+        # Ensure uniqueness by checking database
+        original_code = family_code
+        while await db.users.find_one({"family_code": family_code}):
+            family_code = generate_family_code()
+            logger.info(f"🔄 Family code {original_code} already exists, generated new: {family_code}")
 
-    # Update user with new family code
-    await db.users.update_one(
-        {"_id": ObjectId(current_user.id)},
-        {
-            "$set": {
-                "family_code": family_code,
-                "family_code_expires": expires_at,
-                "updated_at": datetime.utcnow()
+        # Calculate expiration if specified
+        expires_at = None
+        if code_data.get("expires_in_days"):
+            expires_at = datetime.utcnow() + timedelta(days=code_data["expires_in_days"])
+            logger.info(f"📅 Family code expires in {code_data['expires_in_days']} days")
+
+        # Update user with new family code
+        logger.info(f"💾 Updating user {current_user.id} with family code: {family_code}")
+        update_result = await db.users.update_one(
+            {"_id": ObjectId(current_user.id)},
+            {
+                "$set": {
+                    "family_code": family_code,
+                    "family_code_expires": expires_at,
+                    "updated_at": datetime.utcnow()
+                }
             }
-        }
-    )
+        )
 
-    return {"family_code": family_code, "expires_at": expires_at}
+        if update_result.modified_count > 0:
+            logger.info(f"✅ Successfully updated user {current_user.id} with family code")
+        else:
+            logger.warning(f"⚠️ User {current_user.id} was not updated (might already have this family code)")
+
+        # Verify the update
+        updated_user = await db.users.find_one({"_id": ObjectId(current_user.id)})
+        if updated_user and updated_user.get("family_code"):
+            logger.info(f"✅ Verification: User now has family code: {updated_user['family_code']}")
+        else:
+            logger.error(f"❌ Verification failed: User {current_user.id} does not have family code after update")
+
+        return {"family_code": family_code, "expires_at": expires_at}
+
+    except Exception as e:
+        logger.error(f"❌ Error generating family code for user {current_user.id}: {e}")
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate family code: {str(e)}"
+        )
 
 @app.post("/api/family/join-family")
 async def join_family(
@@ -586,55 +604,99 @@ async def join_family(
     db = Depends(get_database_safe)
 ):
     """Allow a child to join a family using a family code"""
-    # Check if child is already linked to a parent
-    if current_user.parent_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Already linked to a parent account"
-        )
+    logger.info(f"🔗 Child {current_user.email} (ID: {current_user.id}) attempting to join family with code: {join_data.get('family_code', 'N/A')}")
 
-    # Find parent with this family code
-    parent = await db.users.find_one({
-        "family_code": join_data["family_code"],
-        "role": UserRole.PARENT
-    })
+    try:
+        # Check if child is already linked to a parent
+        if current_user.parent_id:
+            logger.warning(f"⚠️ Child {current_user.id} is already linked to parent {current_user.parent_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Already linked to a parent account"
+            )
 
-    if not parent:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Invalid family code"
-        )
+        # Find parent with this family code
+        logger.info(f"🔍 Searching for parent with family code: {join_data['family_code']}")
+        parent = await db.users.find_one({
+            "family_code": join_data["family_code"],
+            "role": UserRole.PARENT
+        })
 
-    # Check if family code has expired
-    if parent.get("family_code_expires") and parent["family_code_expires"] < datetime.utcnow():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Family code has expired"
-        )
+        if not parent:
+            logger.warning(f"❌ Invalid family code: {join_data['family_code']}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Invalid family code"
+            )
 
-    parent_id = str(parent["_id"])
+        # Check if family code has expired
+        if parent.get("family_code_expires") and parent["family_code_expires"] < datetime.utcnow():
+            logger.warning(f"⏰ Family code expired: {join_data['family_code']}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Family code has expired"
+            )
 
-    # Update child's parent_id
-    await db.users.update_one(
-        {"_id": ObjectId(current_user.id)},
-        {
-            "$set": {
-                "parent_id": parent_id,
-                "updated_at": datetime.utcnow()
+        parent_id = str(parent["_id"])
+        logger.info(f"✅ Found parent {parent['email']} (ID: {parent_id}) with family code: {join_data['family_code']}")
+
+        # Update child's parent_id
+        logger.info(f"💾 Updating child {current_user.id} with parent_id: {parent_id}")
+        child_update_result = await db.users.update_one(
+            {"_id": ObjectId(current_user.id)},
+            {
+                "$set": {
+                    "parent_id": parent_id,
+                    "updated_at": datetime.utcnow()
+                }
             }
-        }
-    )
+        )
 
-    # Add child to parent's children_ids
-    await db.users.update_one(
-        {"_id": ObjectId(parent_id)},
-        {
-            "$push": {"children_ids": current_user.id},
-            "$set": {"updated_at": datetime.utcnow()}
-        }
-    )
+        if child_update_result.modified_count > 0:
+            logger.info(f"✅ Successfully linked child {current_user.id} to parent {parent_id}")
+        else:
+            logger.warning(f"⚠️ Child {current_user.id} update may have failed")
 
-    return {"message": "Successfully joined family", "parent_name": parent["name"]}
+        # Add child to parent's children_ids
+        logger.info(f"👶 Adding child {current_user.id} to parent {parent_id}'s children list")
+        parent_update_result = await db.users.update_one(
+            {"_id": ObjectId(parent_id)},
+            {
+                "$push": {"children_ids": current_user.id},
+                "$set": {"updated_at": datetime.utcnow()}
+            }
+        )
+
+        if parent_update_result.modified_count > 0:
+            logger.info(f"✅ Successfully added child to parent's children list")
+        else:
+            logger.warning(f"⚠️ Parent {parent_id} update may have failed")
+
+        # Verify the linking
+        updated_child = await db.users.find_one({"_id": ObjectId(current_user.id)})
+        updated_parent = await db.users.find_one({"_id": ObjectId(parent_id)})
+
+        if updated_child and updated_child.get("parent_id"):
+            logger.info(f"✅ Verification: Child {current_user.id} is now linked to parent {updated_child['parent_id']}")
+        else:
+            logger.error(f"❌ Verification failed: Child {current_user.id} not properly linked")
+
+        if updated_parent and current_user.id in updated_parent.get("children_ids", []):
+            logger.info(f"✅ Verification: Parent {parent_id} now has child {current_user.id} in children list")
+        else:
+            logger.error(f"❌ Verification failed: Parent {parent_id} does not have child {current_user.id} in children list")
+
+        return {"message": "Successfully joined family", "parent_name": parent["name"]}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error in join family for child {current_user.id}: {e}")
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to join family: {str(e)}"
+        )
 
 @app.get("/api/family/dashboard")
 async def get_parent_dashboard(
@@ -642,29 +704,56 @@ async def get_parent_dashboard(
     db = Depends(get_database_safe)
 ):
     """Get parent dashboard with family code and children info"""
-    # Get children information
-    children = []
-    if current_user.children_ids:
-        children_docs = await db.users.find({
-            "_id": {"$in": [ObjectId(child_id) for child_id in current_user.children_ids]},
-            "role": UserRole.CHILD
-        }).to_list(length=100)
+    logger.info(f"📊 Getting dashboard for parent: {current_user.email} (ID: {current_user.id})")
+    logger.info(f"🔑 Current family code in user object: {current_user.family_code}")
 
-        children = [
-            {
-                "id": str(child["_id"]),
-                "name": child["name"],
-                "email": child["email"],
-                "created_at": child["created_at"]
-            }
-            for child in children_docs
-        ]
+    try:
+        # Get children information
+        children = []
+        if current_user.children_ids:
+            logger.info(f"👶 Parent has {len(current_user.children_ids)} children: {current_user.children_ids}")
+            children_docs = await db.users.find({
+                "_id": {"$in": [ObjectId(child_id) for child_id in current_user.children_ids]},
+                "role": UserRole.CHILD
+            }).to_list(length=100)
 
-    return {
-        "family_code": current_user.family_code or "No code generated",
-        "family_code_expires": current_user.family_code_expires,
-        "children": children
-    }
+            logger.info(f"📋 Found {len(children_docs)} children in database")
+            children = [
+                {
+                    "id": str(child["_id"]),
+                    "name": child["name"],
+                    "email": child["email"],
+                    "created_at": child["created_at"]
+                }
+                for child in children_docs
+            ]
+        else:
+            logger.info("👶 Parent has no children linked")
+
+        # Verify family code in database
+        actual_user_data = await db.users.find_one({"_id": ObjectId(current_user.id)})
+        actual_family_code = actual_user_data.get("family_code") if actual_user_data else None
+        logger.info(f"🔍 Family code in database: {actual_family_code}")
+
+        if current_user.family_code != actual_family_code:
+            logger.warning(f"⚠️ Family code mismatch! User object: {current_user.family_code}, Database: {actual_family_code}")
+
+        response_data = {
+            "family_code": current_user.family_code or "No code generated",
+            "family_code_expires": current_user.family_code_expires,
+            "children": children
+        }
+
+        logger.info(f"✅ Dashboard response: family_code={response_data['family_code']}, children_count={len(children)}")
+        return response_data
+
+    except Exception as e:
+        logger.error(f"❌ Error getting dashboard for parent {current_user.id}: {e}")
+        logger.error(f"❌ Full traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get dashboard: {str(e)}"
+        )
 
 @app.get("/api/family/my-parent")
 async def get_my_parent(
@@ -959,31 +1048,3 @@ async def delete_note(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete note"
         )
-
-# Tags endpoints
-@app.get("/api/tags/", response_model=List[str])
-async def get_all_tags(
-    current_user: User = Depends(get_current_user),
-    db = Depends(get_database_safe)
-):
-    """Get all unique tags used by the user (or their children if parent)"""
-    match_stage = {}
-
-    # Determine whose tags to fetch based on user role
-    if current_user.role == UserRole.CHILD:
-        match_stage["user_id"] = current_user.id
-    elif current_user.role == UserRole.PARENT:
-        if current_user.children_ids:
-            match_stage["user_id"] = {"$in": current_user.children_ids}
-        else:
-            return []
-
-    pipeline = [
-        {"$match": match_stage},
-        {"$unwind": "$tags"},
-        {"$group": {"_id": "$tags"}},
-        {"$sort": {"_id": 1}}
-    ]
-
-    tags = await db.notes.aggregate(pipeline).to_list(length=None)
-    return [tag["_id"] for tag in tags]

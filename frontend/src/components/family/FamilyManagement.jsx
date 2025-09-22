@@ -53,25 +53,40 @@ const FamilyManagement = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
+      console.log('🔄 Fetching family data for user:', user?.email, 'Role:', user?.role);
+
       if (user?.role === 'parent') {
+        console.log('👨‍👩‍👧‍👦 Parent user detected');
         // If family data is already available in user object, use it
         if (user.family_code !== undefined) {
+          console.log('📋 Using family data from user object:', {
+            family_code: user.family_code,
+            family_code_expires: user.family_code_expires,
+            children_count: user.children?.length || 0
+          });
           setDashboard({
             family_code: user.family_code || null,
             family_code_expires: user.family_code_expires || null,
             children: user.children || []
           });
         } else {
+          console.log('📡 Fetching family dashboard from API...');
           // Otherwise fetch from API
           const response = await axios.get('/family/dashboard');
+          console.log('📊 API dashboard response:', response.data);
           setDashboard(response.data);
         }
       } else if (user?.role === 'child') {
+        console.log('👶 Child user detected, fetching parent info...');
         const response = await axios.get('/family/my-parent');
+        console.log('👨‍👩‍👧‍👦 Parent info response:', response.data);
         setParentInfo(response.data);
+      } else {
+        console.warn('⚠️ Unknown user role:', user?.role);
       }
+      console.log('✅ Family data fetch completed successfully');
     } catch (error) {
-      console.error('Error fetching family data:', error);
+      console.error('❌ Error fetching family data:', error.response?.data || error.message);
       setError('Failed to load family information');
     } finally {
       setLoading(false);
@@ -80,18 +95,50 @@ const FamilyManagement = () => {
 
   const generateFamilyCode = async () => {
     try {
+      console.log('🔄 Generating family code...');
       const data = {};
       if (expirationDays) {
-        data.expires_in_days = parseInt(expirationDays);
+        const days = parseInt(expirationDays);
+        if (days <= 0) {
+          setError('Expiration days must be a positive number');
+          return;
+        }
+        data.expires_in_days = days;
+        console.log('📅 Setting expiration to', days, 'days');
       }
-      
-      await axios.post('/family/generate-code', data);
-      setSuccess('New family code generated successfully!');
+
+      console.log('📤 Sending generate-code request with data:', data);
+      const response = await axios.post('/family/generate-code', data);
+      console.log('✅ Generate code response:', response.data);
+
+      const familyCode = response.data.family_code;
+      if (familyCode) {
+        setSuccess(`New family code generated successfully! Code: ${familyCode}`);
+      } else {
+        setSuccess('New family code generated successfully!');
+      }
+
       setGenerateDialog(false);
       setExpirationDays('');
-      fetchData();
+      console.log('🔄 Fetching updated family data...');
+      await fetchData();
+      console.log('✅ Family code generation completed successfully');
     } catch (error) {
-      setError('Failed to generate family code');
+      console.error('❌ Failed to generate family code:', error.response?.data || error.message);
+
+      // Provide specific error messages based on error type
+      let errorMessage = 'Failed to generate family code';
+      if (error.response?.status === 403) {
+        errorMessage = 'Only parents can generate family codes';
+      } else if (error.response?.status === 500) {
+        errorMessage = 'Server error occurred. Please try again later.';
+      } else if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      } else if (error.message) {
+        errorMessage = `Connection error: ${error.message}`;
+      }
+
+      setError(errorMessage);
     }
   };
 
@@ -114,12 +161,39 @@ const FamilyManagement = () => {
   const joinFamily = async () => {
     try {
       setJoining(true);
-      await axios.post('/family/join-family', { family_code: joinCode });
-      setSuccess('Successfully joined family!');
+      console.log('🔗 Attempting to join family with code:', joinCode);
+
+      // Validate family code format
+      if (!joinCode || joinCode.length !== 8) {
+        setError('Family code must be 8 characters long');
+        return;
+      }
+
+      console.log('📤 Sending join-family request...');
+      const response = await axios.post('/family/join-family', { family_code: joinCode });
+      console.log('✅ Join family response:', response.data);
+
+      setSuccess(`Successfully joined family! Connected to ${response.data.parent_name}`);
       setJoinCode('');
-      fetchData();
+      console.log('🔄 Fetching updated family data after joining...');
+      await fetchData();
+      console.log('✅ Family join process completed successfully');
     } catch (error) {
-      setError(error.response?.data?.detail || 'Failed to join family');
+      console.error('❌ Failed to join family:', error.response?.data || error.message);
+
+      // Provide specific error messages based on error type
+      let errorMessage = 'Failed to join family';
+      if (error.response?.status === 404) {
+        errorMessage = 'Invalid family code. Please check the code and try again.';
+      } else if (error.response?.status === 400) {
+        errorMessage = error.response.data?.detail || 'You are already linked to a parent account';
+      } else if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      } else if (error.message) {
+        errorMessage = `Connection error: ${error.message}`;
+      }
+
+      setError(errorMessage);
     } finally {
       setJoining(false);
     }

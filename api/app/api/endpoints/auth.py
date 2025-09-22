@@ -47,7 +47,6 @@ async def signup(user_data: UserCreate, db = Depends(get_database)):
         while await db.users.find_one({"family_code": family_code}):
             family_code = generate_family_code()
         user_dict["family_code"] = family_code
-        logger.info(f"Generated family code for parent: {user_data.email}")
     
     # Handle family code linking for children
     if user_data.family_code and user_data.role == UserRole.CHILD:
@@ -67,14 +66,14 @@ async def signup(user_data: UserCreate, db = Depends(get_database)):
     
     # Insert user
     result = await db.users.insert_one(user_dict)
-
+    
     # If this is a child with a parent, update parent's children list
     if user_dict["parent_id"]:
         await db.users.update_one(
             {"_id": ObjectId(user_dict["parent_id"])},
             {"$push": {"children_ids": str(result.inserted_id)}}
         )
-
+    
     # Return user data
     user_public_data = {
         "id": str(result.inserted_id),

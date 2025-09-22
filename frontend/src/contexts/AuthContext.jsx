@@ -76,13 +76,23 @@ export const AuthProvider = ({ children }) => {
 
         if (token && savedUser) {
           const userData = JSON.parse(savedUser);
+          console.log('🔐 Auth check - Found existing user:', userData.email, 'Role:', userData.role);
+          console.log('🔑 Family data in saved user:', {
+            family_code: userData.family_code,
+            family_code_expires: userData.family_code_expires,
+            children: userData.children
+          });
+
           authAxios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
 
           // Fetch fresh family data for parents if not already present
-          if (userData.role === 'parent' && !userData.family_code) {
+          if (userData.role === 'parent') {
             try {
+              console.log('👨‍👩‍👧‍👦 Fetching fresh family dashboard for parent...');
               const familyResponse = await authAxios.get('/family/dashboard');
               const familyData = familyResponse.data;
+
+              console.log('📊 Family dashboard response:', familyData);
 
               // Update user data with family information
               const updatedUserData = {
@@ -92,19 +102,27 @@ export const AuthProvider = ({ children }) => {
                 children: familyData.children || []
               };
 
+              console.log('🔄 Updated user data:', {
+                family_code: updatedUserData.family_code,
+                family_code_expires: updatedUserData.family_code_expires,
+                children_count: updatedUserData.children?.length || 0
+              });
+
               localStorage.setItem('user', JSON.stringify(updatedUserData));
               setUser(updatedUserData);
-              console.log('Updated parent user with family data:', updatedUserData);
+              console.log('✅ Parent user updated with fresh family data');
             } catch (familyError) {
-              console.warn('Failed to fetch family dashboard for existing user:', familyError);
+              console.warn('⚠️ Failed to fetch family dashboard for existing user:', familyError.response?.data || familyError.message);
+              console.warn('⚠️ Using saved user data without fresh family info');
               setUser(userData); // Still set the user even if family data fetch fails
             }
           } else {
+            console.log('👶 Child user - no family data fetch needed');
             setUser(userData);
           }
         }
       } catch (error) {
-        console.error('Auth check failed:', error);
+        console.error('❌ Auth check failed:', error);
         localStorage.removeItem('token');
         localStorage.removeItem('user');
       } finally {
@@ -117,27 +135,34 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     try {
+      console.log('🔐 Login attempt for:', email);
       const response = await authAxios.post('/auth/signin', {
         email,
         password,
       });
 
       const { access_token } = response.data;
+      console.log('✅ Login successful, received token');
 
       // Get user info
       authAxios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
       const userResponse = await authAxios.get('/auth/me');
+      console.log('👤 User info fetched:', userResponse.data.email, 'Role:', userResponse.data.role);
 
       // Fetch family dashboard data for parents
       let familyData = null;
       if (userResponse.data.role === 'parent') {
         try {
+          console.log('👨‍👩‍👧‍👦 Fetching family dashboard for parent...');
           const familyResponse = await authAxios.get('/family/dashboard');
           familyData = familyResponse.data;
-          console.log('Family dashboard fetched:', familyData);
+          console.log('📊 Family dashboard response:', familyData);
         } catch (familyError) {
-          console.warn('Failed to fetch family dashboard:', familyError);
+          console.warn('⚠️ Failed to fetch family dashboard:', familyError.response?.data || familyError.message);
+          console.warn('⚠️ Family data will be null, user can still proceed');
         }
+      } else {
+        console.log('👶 Child user - no family dashboard needed');
       }
 
       // Merge family data with user data
@@ -148,14 +173,23 @@ export const AuthProvider = ({ children }) => {
         children: familyData?.children || []
       };
 
+      console.log('🔄 Final user data for login:', {
+        email: userData.email,
+        role: userData.role,
+        family_code: userData.family_code,
+        family_code_expires: userData.family_code_expires,
+        children_count: userData.children?.length || 0
+      });
+
       // Save to localStorage
       localStorage.setItem('token', access_token);
       localStorage.setItem('user', JSON.stringify(userData));
 
       setUser(userData);
+      console.log('✅ Login process completed successfully');
       return userData;
     } catch (error) {
-      console.error('Login failed:', error);
+      console.error('❌ Login failed:', error.response?.data || error.message);
       throw error;
     }
   };

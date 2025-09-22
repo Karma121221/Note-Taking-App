@@ -26,10 +26,10 @@ async def get_database():
     try:
         client = get_mongo_client()
         db = client[settings.DATABASE_NAME]
-
+        
         # Test connection with a simple ping
         await client.admin.command('ping')
-
+        
         return db
     except Exception as e:
         logger.error(f"Database connection error: {e}")
