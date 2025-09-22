@@ -71,7 +71,7 @@ flowchart TD
 ### 1. Sign In / Sign Up
 
 - User authentication for parent/child roles.
-- ![Sign In Screenshot](frontend/public/signin.png) <!-- Replace with actual screenshot -->
+- ![Sign Up Screenshot](frontend/public/signup.png) <!-- Replace with actual screenshot -->
 - ![Log In Screenshot](frontend/public/login.png) <!-- Replace with actual screenshot -->
 
 ### 2. Dashboard
