@@ -53,44 +53,107 @@ settings = Settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
-# Database
-_client = None
-
-def get_mongo_client():
-    global _client
-    if _client is None:
-        logger.info("Creating new MongoDB client")
-        _client = AsyncIOMotorClient(
-            settings.MONGO_URI,
-            maxPoolSize=1,  # Limit pool size for serverless
-            minPoolSize=0,
-            maxIdleTimeMS=30000,  # Close connections after 30 seconds
-            serverSelectionTimeoutMS=5000,  # 5 second timeout
-            connectTimeoutMS=10000,  # 10 second connection timeout
-            socketTimeoutMS=10000,  # 10 second socket timeout
-        )
-    return _client
-
-async def get_database():
+# Database connection for serverless environments
+async def get_mongo_client():
+    """Create a new MongoDB client for each request in serverless"""
     try:
-        client = get_mongo_client()
-        db = client[settings.DATABASE_NAME]
-        
-        # Quick ping to ensure connection is alive
-        await client.admin.command('ping')
-        logger.info("Database connection successful")
-        return db
+        logger.info(f"Creating new MongoDB client for serverless with URI: {settings.MONGO_URI[:50]}...")
+        logger.info(f"MongoDB URI length: {len(settings.MONGO_URI)}")
+
+        # Log connection parameters
+        connection_params = {
+            "serverSelectionTimeoutMS": 10000,
+            "connectTimeoutMS": 20000,
+            "socketTimeoutMS": 60000,
+            "maxPoolSize": 1,
+            "minPoolSize": 0,
+            "maxIdleTimeMS": 30000,
+            "waitQueueTimeoutMS": 10000,
+            "heartbeatFrequencyMS": 10000,
+            "maxStalenessSeconds": 30,
+            "retryWrites": True,
+            "retryReads": True,
+        }
+        logger.info(f"MongoDB connection parameters: {connection_params}")
+
+        client = AsyncIOMotorClient(
+            settings.MONGO_URI,
+            serverSelectionTimeoutMS=10000,  # 10 second timeout for server selection
+            connectTimeoutMS=20000,  # 20 second connection timeout
+            socketTimeoutMS=60000,  # 60 second socket timeout (within Vercel limits)
+            maxPoolSize=1,  # Single connection for serverless
+            minPoolSize=0,  # Don't maintain idle connections
+            maxIdleTimeMS=30000,  # Close connections after 30 seconds of inactivity
+            waitQueueTimeoutMS=10000,  # 10 second wait queue timeout
+            retryWrites=True,
+            retryReads=True,
+            # Add server monitoring for better connection health
+            heartbeatFrequencyMS=10000,  # 10 second heartbeat
+            maxStalenessSeconds=30,  # 30 second max staleness
+        )
+
+        logger.info("MongoDB client created successfully")
+        return client
     except Exception as e:
-        logger.error(f"Database connection error: {e}")
-        # Reset client on error
-        global _client
-        if _client:
-            _client.close()
-        _client = None
+        logger.error(f"Failed to create MongoDB client: {e}")
+        logger.error(f"Exception type: {type(e).__name__}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database connection failed"
         )
+
+async def get_database():
+    """Get database instance optimized for serverless with retry logic"""
+    client = None
+    max_retries = 2
+    retry_count = 0
+
+    while retry_count <= max_retries:
+        try:
+            client = await get_mongo_client()
+            db_name = settings.DATABASE_NAME
+            logger.info(f"Getting database: {db_name} (attempt {retry_count + 1}/{max_retries + 1})")
+            db = client[db_name]
+
+            # Test connection with ping - this is crucial for serverless
+            logger.info("Testing database connection with ping...")
+            try:
+                ping_result = await client.admin.command('ping')
+                logger.info(f"Database ping successful: {ping_result}")
+            except Exception as ping_error:
+                logger.error(f"Database ping failed: {ping_error}")
+                if retry_count < max_retries:
+                    logger.info(f"Retrying database connection (attempt {retry_count + 2})...")
+                    retry_count += 1
+                    if client:
+                        client.close()
+                    continue
+                raise ping_error
+
+            logger.info("Database connection successful")
+            return db
+        except Exception as e:
+            logger.error(f"Database connection error (attempt {retry_count + 1}): {e}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+
+            if retry_count < max_retries:
+                logger.info(f"Retrying database connection (attempt {retry_count + 2})...")
+                retry_count += 1
+                if client:
+                    client.close()
+                continue
+            else:
+                # Close client on final error
+                if client:
+                    client.close()
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Database service temporarily unavailable"
+                )
 
 # Models
 class UserRole(str, Enum):
@@ -179,13 +242,21 @@ def verify_token(token: str):
 
 async def get_database_safe():
     """Safe database getter with proper error handling for serverless"""
-    db = None
+    client = None
     try:
-        db = await get_database()
+        client = await get_mongo_client()
+        db = client[settings.DATABASE_NAME]
+
+        # Test connection with ping
+        logger.info("Testing database connection with ping (safe mode)...")
+        await client.admin.command('ping')
+        logger.info("Database connection successful (safe mode)")
         return db
     except Exception as e:
         logger.error(f"Failed to get database: {e}")
-        await close_db_connection()
+        # Close client on error
+        if client:
+            client.close()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database service temporarily unavailable"
@@ -201,22 +272,25 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
+
+    client = None
     try:
         token_data = verify_token(credentials.credentials)
         if token_data is None:
             raise credentials_exception
-        
+
         user = await db.users.find_one({"_id": ObjectId(token_data.user_id)})
         if user is None:
             raise credentials_exception
-        
+
         return User(**user, id=str(user["_id"]))
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error in get_current_user: {e}")
-        await close_db_connection()
+        # Close the client connection on error
+        if client:
+            client.close()
         raise credentials_exception
 
 async def get_current_child_user(current_user = Depends(get_current_user)):
@@ -228,12 +302,11 @@ async def get_current_child_user(current_user = Depends(get_current_user)):
     return current_user
 
 async def close_db_connection():
-    """Close database connection"""
-    global _client
-    if _client:
-        logger.info("Closing MongoDB connection")
-        _client.close()
-        _client = None
+    """Close database connection (no-op in serverless - connections are per-request)"""
+    # In serverless environments, connections are created per-request and closed automatically
+    # No need for global connection management
+    logger.info("close_db_connection called - connections managed per-request in serverless")
+    pass
 
 # FastAPI app
 app = FastAPI(title="Note Taking App API")
