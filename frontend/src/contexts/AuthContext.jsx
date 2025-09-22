@@ -29,34 +29,41 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Configure axios defaults
+  // Create dedicated axios instance for auth
   const baseURL = getApiBaseUrl();
   console.log('AuthContext - baseURL:', baseURL);
-  axios.defaults.baseURL = baseURL;
+  
+  const authAxios = axios.create({
+    baseURL: baseURL,
+    timeout: 10000,
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
 
   // Set up axios interceptor to include token in requests
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (token) {
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      authAxios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     }
 
     // Response interceptor to handle token expiration
-    const responseInterceptor = axios.interceptors.response.use(
+    const responseInterceptor = authAxios.interceptors.response.use(
       (response) => response,
       (error) => {
         if (error.response?.status === 401) {
           localStorage.removeItem('token');
           localStorage.removeItem('user');
           setUser(null);
-          delete axios.defaults.headers.common['Authorization'];
+          delete authAxios.defaults.headers.common['Authorization'];
         }
         return Promise.reject(error);
       }
     );
 
     return () => {
-      axios.interceptors.response.eject(responseInterceptor);
+      authAxios.interceptors.response.eject(responseInterceptor);
     };
   }, []);
 
@@ -69,7 +76,7 @@ export const AuthProvider = ({ children }) => {
 
         if (token && savedUser) {
           setUser(JSON.parse(savedUser));
-          axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+          authAxios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         }
       } catch (error) {
         console.error('Auth check failed:', error);
@@ -85,7 +92,7 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     try {
-      const response = await axios.post('/auth/signin', {
+      const response = await authAxios.post('/auth/signin', {
         email,
         password,
       });
@@ -93,8 +100,8 @@ export const AuthProvider = ({ children }) => {
       const { access_token } = response.data;
       
       // Get user info
-      axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
-      const userResponse = await axios.get('/auth/me');
+      authAxios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+      const userResponse = await authAxios.get('/auth/me');
       
       // Save to localStorage
       localStorage.setItem('token', access_token);
@@ -122,7 +129,9 @@ export const AuthProvider = ({ children }) => {
         requestData.family_code = familyCode.trim().toUpperCase();
       }
       
-      const response = await axios.post('/auth/signup', requestData);
+      console.log('Registering with data:', requestData);
+      const response = await authAxios.post('/auth/signup', requestData);
+      console.log('Registration response:', response.data);
 
       // Auto-login after registration
       return await login(email, password);
@@ -135,7 +144,7 @@ export const AuthProvider = ({ children }) => {
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    delete axios.defaults.headers.common['Authorization'];
+    delete authAxios.defaults.headers.common['Authorization'];
     setUser(null);
   };
 
